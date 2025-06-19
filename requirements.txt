@@ -1,2 +1,3 @@
 requests
 from amadeus import Client, ResponseError
+python-dotenv
