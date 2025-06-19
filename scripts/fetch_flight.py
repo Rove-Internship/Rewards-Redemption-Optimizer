@@ -1,12 +1,9 @@
 from amadeus import Client, ResponseError
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
 
 amadeus = Client(
-    client_id=os.getenv("AMADEUS_API_KEY") or "WHSpTTK3EtNGKQwYGFXPK18HQAeEqoXT",
-    client_secret=os.getenv("AMADEUS_API_SECRET") or "YvNIWVDtJb1AKlVS"
+    client_id="WHSpTTK3EtNGKQwYGFXPK18HQAeEqoXT",
+    client_secret="YvNIWVDtJb1AKlVS"
 )
 
 try:
