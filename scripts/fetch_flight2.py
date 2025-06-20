@@ -4,6 +4,8 @@ import requests
 import json
 import sqlite3
 from datetime import datetime
+from datetime import timedelta
+
 
 load_dotenv()
 
@@ -243,6 +245,12 @@ class AmadeusFlightSearch:
         
         return results, stored_count
 
+def generate_dates(start_date, end_date):
+    """Return a list of YYYY-MM-DD strings between two dates (inclusive)."""
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    return [(start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range((end - start).days + 1)]
+
 def main():
     client_id = os.getenv("AMADEUS_CLIENT_ID")
     client_secret = os.getenv("AMADEUS_CLIENT_SECRET")
@@ -252,44 +260,33 @@ def main():
         return
     
     flight_search = AmadeusFlightSearch()
+
+    # Step 1: Define 3 travel routes
+    routes = [
+        ("BOS", "SFO"),
+        ("JFK", "LAX"),
+        ("ORD", "SEA")
+    ]
     
-    results, _ = flight_search.search_and_store_flights(
-        origin='BOS',
-        destination='SFO', 
-        departure_date='2025-08-01',
-        adults=1
-    )
+    # Step 2: Generate dates for 1 month (August 2025)
+    travel_dates = generate_dates("2025-08-01", "2025-08-31")
     
-    if not results or 'data' not in results:
-        print("No flight data received")
-        return
+    # Step 3: Loop over each route and each day
+    for origin, destination in routes:
+        for date in travel_dates:
+            print(f"\n🛫 Fetching {origin} → {destination} on {date}")
+            try:
+                results, stored_count = flight_search.search_and_store_flights(
+                    origin=origin,
+                    destination=destination,
+                    departure_date=date,
+                    adults=1
+                )
+                print(f"Stored {stored_count} offers\n")
+            except Exception as e:
+                print(f"Error: {e}")
     
-    offers = results['data']
-    print(f"\nFound {len(offers)} flight offers:")
-    print("=" * 50)
-    
-    for i, offer in enumerate(offers, 1):
-        price = offer['price']['total']
-        currency = offer['price']['currency']
-        
-        print(f"\nOffer {i}: {price} {currency}")
-        
-        for itinerary in offer['itineraries']:
-            segments = itinerary['segments']
-            
-            for segment in segments:
-                dep_code = segment['departure']['iataCode']
-                arr_code = segment['arrival']['iataCode']
-                dep_time = segment['departure']['at']
-                arr_time = segment['arrival']['at']
-                airline = segment['carrierCode']
-                flight_num = segment['number']
-                
-                print(f"  {airline}{flight_num}: {dep_code} → {arr_code}")
-                print(f"  Departure: {dep_time} | Arrival: {arr_time}")
-        
-        print("-" * 30)
-    
+    # Step 4: Show summary
     print("\nRecent searches from database:")
     print("=" * 50)
     recent_searches = flight_search.db.get_recent_searches(5)
@@ -297,7 +294,7 @@ def main():
     for search in recent_searches:
         _, origin, destination, dep_date, offer_count, min_price, max_price, currency, created_at = search
         print(f"{created_at}: {origin} → {destination} on {dep_date}")
-        print(f"{offer_count} offers found | Price range: {min_price}-{max_price} {currency}")
+        print(f"{offer_count} offers | Price range: {min_price}-{max_price} {currency}")
         print("-" * 30)
 
 if __name__ == "__main__":
