@@ -1,3 +1,4 @@
 requests
 from amadeus import Client, ResponseError
 python-dotenv
+sqlite3
