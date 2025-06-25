@@ -7,6 +7,16 @@ from datetime import datetime, timedelta
 
 load_dotenv()
 
+# Estimate miles based on a fixed conversion (placeholder)
+def estimate_miles(origin, destination):
+    airport_distances = {
+        ("JFK", "LAX"): 2475,
+        ("BOS", "SFO"): 2700,
+        ("ORD", "SEA"): 1720,
+        ("LAX", "SEA"): 954,
+    }
+    return airport_distances.get((origin, destination), 1000)
+
 class FlightDatabase:
     def __init__(self, db_path="flight_offers.db"):
         self.db_path = db_path
@@ -26,6 +36,8 @@ class FlightDatabase:
                 departure_date DATE,
                 total_price REAL,
                 currency TEXT,
+                miles_used INTEGER,
+                fees REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -56,7 +68,7 @@ class FlightDatabase:
         search_id = f"{search_params['search_type']}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         stored_count = 0
 
-        for offer in offers:
+        for i, offer in enumerate(offers):
             itinerary = offer['itineraries'][0] if offer['itineraries'] else None
             if not itinerary:
                 continue
@@ -64,17 +76,34 @@ class FlightDatabase:
             first_segment = itinerary['segments'][0]
             last_segment = itinerary['segments'][-1]
 
+            origin = first_segment['departure']['iataCode']
+            destination = last_segment['arrival']['iataCode']
+
+            total_price = float(offer['price']['total'])
+            currency = offer['price']['currency']
+
+            # Simulate redemptions for every 3rd flight
+            if i % 3 == 0:
+                miles_used = estimate_miles(origin, destination) * 10  # Simulated mile multiplier
+                fees = round(total_price * 0.1, 2)  # 10% of original cash price
+                total_price = 0.0
+            else:
+                miles_used = 0
+                fees = 0.0
+
             cursor.execute('''
-                INSERT INTO flights1 (search_id, offer_id, origin, destination, departure_date, total_price, currency)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO flights1 (search_id, offer_id, origin, destination, departure_date, total_price, currency, miles_used, fees)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 search_id,
                 offer['id'],
-                first_segment['departure']['iataCode'],
-                last_segment['arrival']['iataCode'],
+                origin,
+                destination,
                 first_segment['departure']['at'].split('T')[0],
-                float(offer['price']['total']),
-                offer['price']['currency']
+                total_price,
+                currency,
+                miles_used,
+                fees
             ))
 
             flight_id = cursor.lastrowid
@@ -233,7 +262,6 @@ def generate_dates(start_date, end_date):
 def main():
     searcher = AmadeusFlightSearch()
 
-    # Direct flight search
     routes = [("BOS", "SFO"), ("JFK", "LAX"), ("ORD", "SEA")]
     dates = generate_dates("2025-08-01", "2025-08-03")
 
@@ -241,7 +269,6 @@ def main():
         for date in dates:
             searcher.search_and_store_flights(origin, destination, date)
 
-    # Multi-city search example
     segments = [
         {"id": "1", "originLocationCode": "BOS", "destinationLocationCode": "LAX", "departureDate": "2025-08-01"},
         {"id": "2", "originLocationCode": "LAX", "destinationLocationCode": "SEA", "departureDate": "2025-08-05"}
