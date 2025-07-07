@@ -1,280 +1,169 @@
 from dotenv import load_dotenv
 import os
-import requests
-import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
+import statistics
 
 load_dotenv()
 
-# Estimate miles based on a fixed conversion (placeholder)
-def estimate_miles(origin, destination):
-    airport_distances = {
-        ("JFK", "LAX"): 2475,
-        ("BOS", "SFO"): 2700,
-        ("ORD", "SEA"): 1720,
-        ("LAX", "SEA"): 954,
-    }
-    return airport_distances.get((origin, destination), 1000)
-
-class FlightDatabase:
+class ValueCalculator:
     def __init__(self, db_path="flight_offers.db"):
         self.db_path = db_path
-        self.init_database()
+        self.EXCELLENT_VALUE = 2.0
+        self.GOOD_VALUE = 1.5
+        self.FAIR_VALUE = 1.0
+        self.POOR_VALUE = 0.8
 
-    def init_database(self):
-        conn = sqlite3.connect(self.db_path)
+    def connect(self):
+        return sqlite3.connect(self.db_path)
+
+    def check_database_structure(self):
+        conn = self.connect()
         cursor = conn.cursor()
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS flights1 (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                search_id TEXT,
-                offer_id TEXT,
-                origin TEXT,
-                destination TEXT,
-                departure_date DATE,
-                total_price REAL,
-                currency TEXT,
-                miles_used INTEGER,
-                fees REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS flight_segments1 (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                flight_id INTEGER,
-                carrier_code TEXT,
-                flight_number TEXT,
-                departure_iata TEXT,
-                arrival_iata TEXT,
-                departure_time TIMESTAMP,
-                arrival_time TIMESTAMP,
-                segment_order INTEGER,
-                FOREIGN KEY (flight_id) REFERENCES flights1 (id)
-            )
-        ''')
-
-        conn.commit()
-        conn.close()
-        print(f"Database initialized: {self.db_path}")
-
-    def store_flight_offers(self, offers, search_params):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        search_id = f"{search_params['search_type']}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        stored_count = 0
-
-        for i, offer in enumerate(offers):
-            itinerary = offer['itineraries'][0] if offer['itineraries'] else None
-            if not itinerary:
-                continue
-
-            first_segment = itinerary['segments'][0]
-            last_segment = itinerary['segments'][-1]
-
-            origin = first_segment['departure']['iataCode']
-            destination = last_segment['arrival']['iataCode']
-
-            total_price = float(offer['price']['total'])
-            currency = offer['price']['currency']
-
-            # Simulate redemptions for every 3rd flight
-            if i % 3 == 0:
-                miles_used = estimate_miles(origin, destination) * 10  # Simulated mile multiplier
-                fees = round(total_price * 0.1, 2)  # 10% of original cash price
-                total_price = 0.0
-            else:
-                miles_used = 0
-                fees = 0.0
-
-            cursor.execute('''
-                INSERT INTO flights1 (search_id, offer_id, origin, destination, departure_date, total_price, currency, miles_used, fees)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                search_id,
-                offer['id'],
-                origin,
-                destination,
-                first_segment['departure']['at'].split('T')[0],
-                total_price,
-                currency,
-                miles_used,
-                fees
-            ))
-
-            flight_id = cursor.lastrowid
-
-            for itinerary in offer['itineraries']:
-                for segment_order, segment in enumerate(itinerary['segments'], 1):
-                    cursor.execute('''
-                        INSERT INTO flight_segments1 (
-                            flight_id, carrier_code, flight_number, departure_iata, 
-                            arrival_iata, departure_time, arrival_time, segment_order
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        flight_id,
-                        segment['carrierCode'],
-                        segment['number'],
-                        segment['departure']['iataCode'],
-                        segment['arrival']['iataCode'],
-                        segment['departure']['at'],
-                        segment['arrival']['at'],
-                        segment_order
-                    ))
-
-            stored_count += 1
-
-        conn.commit()
-        conn.close()
-        print(f"Stored {stored_count} flight offers in database")
-        return stored_count
-
-class AmadeusFlightSearch:
-    def __init__(self, db_path="flight_offers.db"):
-        self.client_id = os.getenv("AMADEUS_CLIENT_ID")
-        self.client_secret = os.getenv("AMADEUS_CLIENT_SECRET")
-        self.base_url = "https://test.api.amadeus.com"
-        self.access_token = None
-        self.db = FlightDatabase(db_path)
-
-    def get_access_token(self):
-        auth_url = f"{self.base_url}/v1/security/oauth2/token"
-        auth_data = {
-            "grant_type": "client_credentials",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret
-        }
-
         try:
-            response = requests.post(auth_url, data=auth_data)
-            response.raise_for_status()
-            self.access_token = response.json()["access_token"]
-            print("Authentication successful!")
-            return True
-        except requests.exceptions.RequestException as e:
-            print(f"Authentication failed: {e}")
+            cursor.execute("PRAGMA table_info(flights1)")
+            columns = [col[1] for col in cursor.fetchall()]
+            conn.close()
+            return 'miles_used' in columns and 'fees' in columns
+        except sqlite3.OperationalError:
+            conn.close()
             return False
 
-    def search_flights(self, origin, destination, departure_date, adults=1):
-        if not self.access_token and not self.get_access_token():
-            return None
+    def add_sample_redemption_data(self, origin=None, destination=None):
+        conn = self.connect()
+        cursor = conn.cursor()
 
-        url = f"{self.base_url}/v2/shopping/flight-offers"
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
-        }
-        params = {
-            "originLocationCode": origin,
-            "destinationLocationCode": destination,
-            "departureDate": departure_date,
-            "adults": adults,
-            "max": 5
-        }
-
-        try:
-            print(f"Searching direct flight: {origin} to {destination} on {departure_date}")
-            response = requests.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Direct flight search failed: {e}")
-            return None
-
-    def search_multi_city(self, segments, adults=1):
-        if not self.access_token and not self.get_access_token():
-            return None
-
-        url = f"{self.base_url}/v2/shopping/flight-offers"
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
-        }
-
-        formatted_segments = [
-            {
-                "id": seg["id"],
-                "originLocationCode": seg["originLocationCode"],
-                "destinationLocationCode": seg["destinationLocationCode"],
-                "departureDateTimeRange": {
-                    "date": seg["departureDate"]
-                }
-            }
-            for seg in segments
+        sample_data = [
+            (350, 25000, 50.0), (450, 30000, 75.0), (200, 20000, 40.0),
+            (550, 35000, 100.0), (180, 15000, 30.0), (600, 40000, 125.0)
         ]
 
-        body = {
-            "currencyCode": "USD",
-            "originDestinations": formatted_segments,
-            "travelers": [{"id": "1", "travelerType": "ADULT"}],
-            "sources": ["GDS"]
-        }
+        for price, miles, fees in sample_data:
+            cursor.execute("""
+                INSERT INTO flights1 (origin, destination, departure_date, total_price, miles_used, fees)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (origin or "XXX", destination or "YYY", datetime.now().strftime("%Y-%m-%d"), price, miles, fees))
 
-        try:
-            print(f"Searching multi-city trip with {len(segments)} legs")
-            response = requests.post(url, headers=headers, json=body)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Multi-city search failed: {e}")
-            print(response.text)
-            return None
+        conn.commit()
+        conn.close()
+        print(f"Added {len(sample_data)} sample flights for {origin} → {destination}")
 
-    def search_and_store_multi_city(self, segments):
-        results = self.search_multi_city(segments)
-        if not results or 'data' not in results:
-            print("No flight data to store (multi-city)")
-            return None, 0
+    def show_redemption_values(self, origin=None, destination=None):
+        conn = self.connect()
+        cursor = conn.cursor()
 
-        search_params = {
-            'search_type': 'multi-city'
-        }
+        query = "SELECT id, origin, destination, total_price, miles_used, fees, departure_date FROM flights1"
+        params = []
+        if origin and destination:
+            query += " WHERE origin = ? AND destination = ?"
+            params = [origin, destination]
 
-        stored_count = self.db.store_flight_offers(results['data'], search_params)
-        return results, stored_count
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        conn.close()
 
-    def search_and_store_flights(self, origin, destination, departure_date, adults=1):
-        results = self.search_flights(origin, destination, departure_date, adults)
-        if not results or 'data' not in results:
-            print("No flight data to store (direct)")
-            return None, 0
+        print("\nRedemption Values:")
+        for row in results:
+            print(f"{row[0]}: {row[1]} → {row[2]}, {row[6]}, ${row[3]:.2f}, {row[4]} miles, ${row[5]:.2f} fees")
 
-        search_params = {
-            'origin': origin,
-            'destination': destination,
-            'departure_date': departure_date,
-            'adults': adults,
-            'search_type': 'direct'
-        }
+    def get_best_redemptions(self, limit=10, min_value=1.0):
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.execute("SELECT origin, destination, total_price, miles_used, fees, departure_date FROM flights1")
+        flights = cursor.fetchall()
+        conn.close()
 
-        stored_count = self.db.store_flight_offers(results['data'], search_params)
-        return results, stored_count
+        redemptions = []
+        for origin, destination, price, miles, fees, date in flights:
+            if miles == 0:
+                continue
+            vpm = round((price - fees) / miles, 4)
+            if vpm >= min_value:
+                category = self.get_value_category(vpm)
+                redemptions.append({'route': f"{origin} → {destination}", 'date': date,
+                                    'value': vpm, 'category': category,
+                                    'price': price, 'miles': miles, 'fees': fees})
+        redemptions.sort(key=lambda x: x['value'], reverse=True)
+        return redemptions[:limit]
 
-def generate_dates(start_date, end_date):
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    return [(start + timedelta(days=i)).strftime("%Y-%m-%d") for i in range((end - start).days + 1)]
+    def get_value_category(self, value_per_mile):
+        if value_per_mile >= self.EXCELLENT_VALUE:
+            return "EXCELLENT"
+        elif value_per_mile >= self.GOOD_VALUE:
+            return "GOOD"
+        elif value_per_mile >= self.FAIR_VALUE:
+            return "FAIR"
+        elif value_per_mile >= self.POOR_VALUE:
+            return "POOR"
+        else:
+            return "AVOID"
+
+    def get_cheapest_flights(self, origin=None, destination=None, limit=10):
+        conn = self.connect()
+        cursor = conn.cursor()
+
+        query = "SELECT id, origin, destination, total_price, miles_used, fees, departure_date FROM flights1"
+        params = []
+        if origin and destination:
+            query += " WHERE origin = ? AND destination = ?"
+            params.extend([origin, destination])
+
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        conn.close()
+
+        sorted_results = sorted(results, key=lambda x: x[3])
+        return sorted_results[:limit]
+
+# ---------------- Main CLI -------------------
 
 def main():
-    searcher = AmadeusFlightSearch()
+    calc = ValueCalculator()
+    print("\n✈️  Flight Redemption Value Calculator")
+    print("=" * 50)
 
-    routes = [("BOS", "SFO"), ("JFK", "LAX"), ("ORD", "SEA")]
-    dates = generate_dates("2025-08-01", "2025-08-03")
+    origin = input("Enter origin airport IATA code (or press Enter to skip): ").strip().upper() or None
+    destination = input("Enter destination airport IATA code (or press Enter to skip): ").strip().upper() or None
 
-    for origin, destination in routes:
-        for date in dates:
-            searcher.search_and_store_flights(origin, destination, date)
+    # Automatically add sample data if no flights exist for the route
+    if not calc.get_cheapest_flights(origin, destination):
+        print(f"No flights found for {origin} → {destination}. Adding sample data...")
+        calc.add_sample_redemption_data(origin, destination)
 
-    segments = [
-        {"id": "1", "originLocationCode": "BOS", "destinationLocationCode": "LAX", "departureDate": "2025-08-01"},
-        {"id": "2", "originLocationCode": "LAX", "destinationLocationCode": "SEA", "departureDate": "2025-08-05"}
-    ]
+    while True:
+        print("\nSelect an option:")
+        print("1. Show all flights' cash prices, miles, and VPM")
+        print("2. Show top redemptions (best VPM)")
+        print("3. Show cheapest flights")
+        print("4. Add/Reset sample data")
+        print("0. Exit")
+        choice = input("Your choice: ")
 
-    searcher.search_and_store_multi_city(segments)
+        if choice == "1":
+            calc.show_redemption_values(origin, destination)
+
+        elif choice == "2":
+            min_value = input("Minimum value-per-mile threshold (default 1.5): ").strip()
+            min_value = float(min_value) if min_value else 1.5
+            best = calc.get_best_redemptions(limit=10, min_value=min_value)
+            for r in best:
+                print(f"{r['route']} on {r['date']}: {r['value']} cpm ({r['category']}) - ${r['price']}, {r['miles']} miles, ${r['fees']} fees")
+
+        elif choice == "3":
+            cheapest = calc.get_cheapest_flights(origin, destination)
+            print("\nCheapest Flights:")
+            for r in cheapest:
+                print(f"{r[1]} → {r[2]}, {r[6]}, ${r[3]:.2f}, {r[4]} miles, ${r[5]:.2f} fees")
+
+        elif choice == "4":
+            calc.add_sample_redemption_data(origin, destination)
+
+        elif choice == "0":
+            print("Exiting.")
+            break
+
+        else:
+            print("Invalid choice, try again.")
 
 if __name__ == "__main__":
     main()
