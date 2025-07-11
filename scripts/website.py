@@ -213,7 +213,7 @@ def show_search_page():
                     )
                     st.session_state.recommendations = recommendations
                     st.session_state.search_completed = True
-                    st.success(f"Showing {len(recommendations)} sample redemption options!")
+                    st.success(f"Showing {len(recommendations)} sample redemption options! Click the Result Tab to view results.")
                     st.balloons()
             else:
                 st.error("Please enter both origin and destination airports.")
@@ -379,11 +379,11 @@ def show_results_page():
     with col2:
         if recommendations:
             avg_value = sum(r['value_per_mile'] for r in recommendations) / len(recommendations)
-            st.metric("Avg Value (cpm)", f"{avg_value:.2f}")
+            st.metric("Avg Value (vpm)", f"{avg_value:.2f}")
     with col3:
         if recommendations:
             best_value = max(r['value_per_mile'] for r in recommendations)
-            st.metric("Best Value (cpm)", f"{best_value:.2f}")
+            st.metric("Best Value (vpm)", f"{best_value:.2f}")
     with col4:
         if recommendations:
             total_savings = sum(r['savings_analysis']['savings'] for r in recommendations)
