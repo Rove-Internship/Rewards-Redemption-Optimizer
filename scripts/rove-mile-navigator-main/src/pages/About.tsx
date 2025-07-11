@@ -9,7 +9,7 @@ const About = () => {
 
   const teamMembers = [
     { name: "Arya Sheth", role: "Project Lead", avatar: "AS" },
-    { name: "Ali Salman", role: "Data Analyst", avatar: "AS" },
+    { name: "Ali Salman", role: "Backend Engineer", avatar: "AS" },
     { name: "Ciana Tzou", role: "Frontend Developer", avatar: "CT" },
     { name: "Kaushal Reddy Duddugunta", role: "Backend Engineer", avatar: "KD" },
     { name: "Norrissa Cole", role: "UX Researcher", avatar: "NC" },
